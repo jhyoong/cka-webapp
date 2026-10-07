@@ -1,0 +1,12 @@
+{
+  "name": "cka-practice-lab",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Local CKA exam practice webapp with a kubectl console and auto-graded lab tasks",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

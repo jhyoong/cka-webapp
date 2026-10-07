@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>CKA Practice Lab</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="#/overview"><span class="brand-mark">⎈</span> CKA Practice Lab</a>
+    <nav id="nav">
+      <a href="#/overview" data-view="overview">Overview</a>
+      <a href="#/tasks" data-view="tasks">Practice</a>
+      <a href="#/scenarios" data-view="scenarios">Scenarios</a>
+      <a href="#/exam" data-view="exam">Mock exam</a>
+      <a href="#/cheats" data-view="cheats">Cheat sheet</a>
+    </nav>
+    <div class="topbar-right">
+      <a id="exam-timer" class="timer" href="#/exam" hidden></a>
+      <button id="cluster" class="cluster" title="Click to refresh"><span class="dot"></span><span id="cluster-text">checking…</span></button>
+      <button id="toggle-console" class="ghost" title="Show / hide the console">Console</button>
+    </div>
+  </header>
+
+  <div class="layout" id="layout">
+    <main id="view" tabindex="-1"></main>
+
+    <aside class="console" id="console" aria-label="kubectl console">
+      <div class="console-tabs" role="tablist">
+        <button role="tab" data-tab="term" class="active">Terminal</button>
+        <button role="tab" data-tab="editor">YAML editor</button>
+        <span class="console-ctx" id="console-ctx"></span>
+      </div>
+
+      <section class="pane active" id="pane-term">
+        <div class="term-out" id="term-out" aria-live="polite"></div>
+        <div class="term-in">
+          <span class="prompt">$</span>
+          <textarea id="term-input" rows="1" spellcheck="false" autocapitalize="off" autocomplete="off"
+            placeholder="kubectl get pods -A     (k works too · ↑↓ history · > file saves output)"></textarea>
+          <button id="term-run" class="primary">Run</button>
+        </div>
+        <div class="term-foot">
+          <span>One kubectl command per line, no shell. Multi-line paste and <code>&lt;&lt;EOF</code> heredocs work.</span>
+          <button class="link" id="term-clear">clear</button>
+        </div>
+      </section>
+
+      <section class="pane" id="pane-editor">
+        <div class="ed-bar">
+          <input id="ed-name" type="text" placeholder="file name, e.g. pod.yaml" spellcheck="false">
+          <select id="ed-files" title="Open a workspace file"><option value="">Open file…</option></select>
+          <button id="ed-save">Save</button>
+        </div>
+        <textarea id="ed-text" spellcheck="false" placeholder="# Paste or write a manifest, then Apply.
+# Tip: run  kubectl run web --image=nginx --dry-run=client -o yaml
+# in the terminal and click “→ editor” on its output."></textarea>
+        <div class="ed-bar">
+          <button id="ed-apply" class="primary">Apply</button>
+          <button id="ed-dry">Dry-run</button>
+          <button id="ed-delete" class="danger">Delete</button>
+          <span class="spacer"></span>
+          <input id="ed-load" type="text" placeholder="deploy/web -n dev" spellcheck="false" title="Resource to load as YAML">
+          <button id="ed-load-btn">Load from cluster</button>
+        </div>
+        <pre class="ed-out" id="ed-out"></pre>
+      </section>
+    </aside>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
