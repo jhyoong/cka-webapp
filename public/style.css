@@ -134,6 +134,14 @@ button.link { background: none; border: 0; color: var(--accent); padding: 0; }
 .edit-text { display: block; width: 100%; box-sizing: border-box; padding: 0.5rem; resize: vertical; font-size: 12.5px; line-height: 1.5; tab-size: 2; white-space: pre; }
 .edit-bar { display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap; margin-top: 0.35rem; color: #5f6c7b; font-size: 11px; }
 .term-welcome { color: #6f7c8c; white-space: pre-wrap; }
+.term-complete { flex: none; max-height: 30vh; overflow-y: auto; display: grid; grid-template-columns: repeat(auto-fill, minmax(13rem, 1fr)); gap: 0 0.8rem; padding: 0.4rem 0.7rem; border-top: 1px solid #1e2732; font: 12px/1.5 var(--mono); }
+.term-complete[hidden] { display: none; }
+.term-complete.described { grid-template-columns: max-content minmax(0, 1fr); }
+.console .term-complete button { display: contents; }
+.term-complete .v { color: #e6edf3; cursor: pointer; overflow-wrap: anywhere; padding: 0.05rem 0; }
+.term-complete .d { color: #6f7c8c; cursor: pointer; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 0.05rem 0; }
+.term-complete button:hover .v { color: #7fb0ff; }
+.term-complete .more { grid-column: 1 / -1; color: #6f7c8c; }
 .term-in { display: flex; align-items: flex-start; gap: 0.5rem; padding: 0.55rem 0.7rem; border-top: 1px solid #1e2732; flex: none; }
 .prompt { color: #4cc38a; font: 13px/1.9 var(--mono); }
 .console textarea, .console input[type="text"], .console select {

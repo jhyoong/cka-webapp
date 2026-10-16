@@ -277,6 +277,14 @@ function subcommand(argv) {
   return undefined;
 }
 
+const PINNED_FLAG = /^--(context|kubeconfig|kube-context|cluster|server|token)(=|$)/;
+
+function assertPinned(argv) {
+  for (const a of argv) {
+    if (PINNED_FLAG.test(a) || a === '-s') throw new Error(`"${a}" is blocked: this console is pinned to the "${KUBE_CONTEXT}" context.`);
+  }
+}
+
 function parseCommand(line) {
   const tokens = tokenize(line.trim());
   if (!tokens.length) throw new Error('Empty command');
@@ -307,11 +315,7 @@ function parseCommand(line) {
   }
   if (bin === 'helm' && !HAS_HELM) throw new Error('helm is not installed on this machine. Install it and restart the server to use it here.');
 
-  for (const a of argv) {
-    if (/^--(context|kubeconfig|kube-context|cluster|server|token)(=|$)/.test(a) || a === '-s') {
-      throw new Error(`"${a}" is blocked: this console is pinned to the "${KUBE_CONTEXT}" context.`);
-    }
-  }
+  assertPinned(argv);
   if (bin === 'kubectl') {
     const sub = subcommand(argv);
     // these open $KUBE_EDITOR: kubectl edit, apply edit-last-applied, create --edit
@@ -344,6 +348,91 @@ async function execLine(line, stdin) {
     res.note = `${res.code === 0 ? 'output' : 'stdout'} written to workspace/${path.relative(WORKSPACE, target)}`;
   }
   return res;
+}
+
+// ---------- tab completion ----------
+// Asks kubectl/helm itself through the hidden "__complete" command that shell completion scripts use:
+// it prints one "value<TAB>description" per line and ends with ":<directive>" (cobra's bit flags).
+const COMP_ERROR = 1;
+const COMP_NO_SPACE = 2;
+const COMP_NO_FILE = 4;
+const COMP_FILE_EXT = 8;
+const COMP_DIRS = 16;
+const COMP_KEEP_ORDER = 32;
+
+// Paths under the workspace (commands run there) that start with `partial`; directories end in "/".
+function completeFiles(partial, exts) {
+  const slash = partial.lastIndexOf('/');
+  const dirRel = slash >= 0 ? partial.slice(0, slash + 1) : '';
+  const base = partial.slice(slash + 1);
+  let entries;
+  try {
+    entries = fs.readdirSync(dirRel ? safeWorkspacePath(dirRel) : WORKSPACE, { withFileTypes: true });
+  } catch {
+    return [];
+  }
+  return entries
+    .filter((e) => e.name.startsWith(base) && (e.isDirectory() || (e.isFile() && (!exts || exts.some((x) => e.name.endsWith('.' + x))))))
+    .map((e) => ({ value: dirRel + e.name + (e.isDirectory() ? '/' : ''), dir: e.isDirectory() }))
+    .sort((a, b) => a.value.localeCompare(b.value));
+}
+
+async function complete(line) {
+  const none = { candidates: [] };
+  let tokens;
+  try {
+    tokens = tokenize(line);
+  } catch {
+    return none; // inside an open quote
+  }
+  if (/\s$/.test(line) || !tokens.length) tokens.push({ v: '', raw: false });
+  const word = tokens[tokens.length - 1].v;
+  const opAt = tokens.findIndex((t) => t.raw);
+  if (opAt >= 0) {
+    // only "> file" is supported after a command, and it takes a workspace path
+    if (opAt !== tokens.length - 2 || !/^>>?$/.test(tokens[opAt].v)) return none;
+    const files = completeFiles(word);
+    return { candidates: files.map((f) => ({ value: f.value })), noSpace: files.length === 1 && files[0].dir };
+  }
+  if (tokens.length === 1) {
+    const bins = ['kubectl', 'k', ...(HAS_HELM ? ['helm'] : [])].filter((b) => b.startsWith(word));
+    return { candidates: bins.map((value) => ({ value })) };
+  }
+  const bin = tokens[0].v === 'k' ? 'kubectl' : tokens[0].v;
+  if (bin !== 'kubectl' && !(bin === 'helm' && HAS_HELM)) return none;
+  const argv = tokens.slice(1).map((t) => t.v);
+  try {
+    assertPinned(argv);
+  } catch {
+    return none;
+  }
+  const ctx = bin === 'kubectl' ? ['--context', KUBE_CONTEXT] : ['--kube-context', KUBE_CONTEXT];
+  const r = await run(bin, ['__complete', ...ctx, ...argv], { timeout: 8000 });
+  const lines = r.stdout.split('\n').filter(Boolean);
+  const dm = lines.length ? lines[lines.length - 1].match(/^:(\d+)$/) : null;
+  if (!dm) return none;
+  const directive = Number(dm[1]);
+  if (directive & COMP_ERROR) return none;
+  // never offer the flags this console blocks
+  let candidates = lines
+    .slice(0, -1)
+    .map((l) => {
+      const [value, desc] = l.split('\t');
+      return { value, desc: desc || undefined };
+    })
+    .filter((c) => !PINNED_FLAG.test(c.value) && c.value !== '-s');
+  let noSpace = !!(directive & COMP_NO_SPACE);
+  const fileWord = word.replace(/^-[^=]*=/, '');
+  if (directive & COMP_FILE_EXT || directive & COMP_DIRS) {
+    const files = completeFiles(fileWord, directive & COMP_FILE_EXT ? candidates.map((c) => c.value) : []).filter((f) => f.dir || directive & COMP_FILE_EXT);
+    candidates = files.map((f) => ({ value: f.value }));
+    noSpace = files.length === 1 && files[0].dir;
+  } else if (!(directive & COMP_NO_FILE) && !candidates.length) {
+    const files = completeFiles(fileWord);
+    candidates = files.map((f) => ({ value: f.value }));
+    noSpace = files.length === 1 && files[0].dir;
+  }
+  return { candidates: candidates.slice(0, 500), more: Math.max(0, candidates.length - 500), noSpace, keepOrder: !!(directive & COMP_KEEP_ORDER) };
 }
 
 // ---------- task setup / checks / cleanup ----------
@@ -528,6 +617,10 @@ async function api(req, res, url) {
     } catch (err) {
       return send(res, 200, { code: 2, stdout: '', stderr: err.message, ms: 0 });
     }
+  }
+  if (m === 'POST' && p === '/api/complete') {
+    const { line } = await readJson(req);
+    return send(res, 200, await complete(String(line || '')));
   }
   if (m === 'POST' && p === '/api/edit') {
     const { id, content, cancel } = await readJson(req);

@@ -268,6 +268,7 @@ function submitTerminal() {
   histPos = cmdHistory.length;
   termInput.value = '';
   autoGrow();
+  hideCompletions();
   runCommands(cmds);
 }
 
@@ -284,9 +285,106 @@ function toTerminal(text, run = false) {
   if (run) submitTerminal();
 }
 
-termInput.addEventListener('input', autoGrow);
+// ───────────── tab completion ─────────────
+// The server asks kubectl itself (its shell-completion engine), so subcommands, flags, resource
+// types and live object names all complete like in bash.
+const compList = $('#term-complete');
+let compSeq = 0;
+
+function hideCompletions() {
+  compSeq++; // drops any answer still on its way
+  compList.hidden = true;
+  compList.replaceChildren();
+}
+
+const commonPrefix = (vals) =>
+  vals.reduce((p, v) => {
+    let i = 0;
+    while (i < p.length && p[i] === v[i]) i++;
+    return p.slice(0, i);
+  });
+
+// Replaces the `word.length` characters before the cursor with `value`, then ends the word with a
+// space like bash does (stepping over one that is already there) unless more is to be typed.
+function insertCompletion(word, value, noSpace) {
+  const pos = termInput.selectionStart;
+  termInput.setRangeText(value, pos - word.length, pos, 'end');
+  if (!noSpace && !/[/=]$/.test(value)) {
+    const at = termInput.selectionStart;
+    if (/\s/.test(termInput.value[at] || '')) termInput.setSelectionRange(at + 1, at + 1);
+    else termInput.setRangeText(' ', at, at, 'end');
+  }
+  autoGrow();
+}
+
+async function tabComplete() {
+  const pos = termInput.selectionStart;
+  if (pos !== termInput.selectionEnd) return;
+  const before = termInput.value.slice(0, pos);
+  const line = before.slice(before.lastIndexOf('\n') + 1);
+  const seq = ++compSeq;
+  let r;
+  try {
+    r = await api('/api/complete', 'POST', { line });
+  } catch {
+    return;
+  }
+  if (seq !== compSeq || termInput.selectionStart !== pos || termInput.value.slice(0, pos) !== before) return; // typed on meanwhile
+  const vals = r.candidates.map((c) => c.value);
+  if (!vals.length) return hideCompletions();
+  const raw = line.match(/\S*$/)[0];
+  // for --flag=value kubectl completes only the part after "="
+  const eq = raw.match(/^-[^=]*=/);
+  const word = eq && !vals.some((v) => v.startsWith('-')) ? raw.slice(eq[0].length) : raw;
+  const prefix = commonPrefix(vals);
+  if (vals.length === 1) {
+    insertCompletion(word, vals[0], r.noSpace);
+    return hideCompletions();
+  }
+  if (prefix.length > word.length && prefix.startsWith(word)) {
+    insertCompletion(word, prefix, true);
+    return hideCompletions();
+  }
+  // nothing more to fill in: list the choices, like a second Tab in bash
+  const withDesc = r.candidates.some((c) => c.desc);
+  compList.className = 'term-complete' + (withDesc ? ' described' : '');
+  compList.replaceChildren(
+    ...r.candidates.map((c) =>
+      h(
+        'button',
+        {
+          type: 'button',
+          onmousedown: (e) => e.preventDefault(), // keep focus in the input
+          onclick: () => {
+            insertCompletion(word, c.value, r.noSpace);
+            hideCompletions();
+          },
+        },
+        h('span', { class: 'v' }, c.value),
+        withDesc && h('span', { class: 'd' }, c.desc || '')
+      )
+    ),
+    r.more > 0 && h('span', { class: 'more' }, `… ${r.more} more — type a few more characters`)
+  );
+  compList.hidden = false;
+}
+
+termInput.addEventListener('input', () => {
+  autoGrow();
+  hideCompletions();
+});
+termInput.addEventListener('blur', () => setTimeout(() => document.activeElement !== termInput && hideCompletions(), 150));
 termInput.addEventListener('keydown', (e) => {
   const single = !termInput.value.includes('\n');
+  if (e.key === 'Tab' && !e.shiftKey && !e.ctrlKey && !e.altKey && !e.metaKey) {
+    e.preventDefault();
+    tabComplete();
+    return;
+  }
+  if (e.key === 'Escape' && !compList.hidden) {
+    e.preventDefault();
+    return hideCompletions();
+  }
   if (e.key === 'Enter' && !e.shiftKey) {
     // keep typing if a heredoc / quote / line continuation is still open
     if (parseScript(termInput.value).open) return;

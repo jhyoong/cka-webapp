@@ -37,10 +37,11 @@
 
       <section class="pane active" id="pane-term">
         <div class="term-out" id="term-out" aria-live="polite"></div>
+        <div class="term-complete" id="term-complete" hidden></div>
         <div class="term-in">
           <span class="prompt">$</span>
           <textarea id="term-input" rows="1" spellcheck="false" autocapitalize="off" autocomplete="off"
-            placeholder="kubectl get pods -A     (k works too · ↑↓ history · > file saves output)"></textarea>
+            placeholder="kubectl get pods -A     (k works too · Tab completes · ↑↓ history · > file saves output)"></textarea>
           <button id="term-run" class="primary">Run</button>
         </div>
         <div class="term-foot">

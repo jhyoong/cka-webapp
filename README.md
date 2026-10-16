@@ -43,7 +43,8 @@ network (the addresses are printed at startup). No dependencies to install (Node
   per-node status and the live `minikube` output. Start on a deleted profile creates it afresh,
   so Delete then Start gives a clean cluster. Other profiles on the machine are never touched.
 - **Console** (right side)
-  - *Terminal*: `kubectl …` or `k …`, history with ↑/↓, multi-line paste, `<<EOF` heredocs,
+  - *Terminal*: `kubectl …` or `k …`, Tab completion (subcommands, flags, resource types, live
+    object names and workspace files, from kubectl's own completion), history with ↑/↓, multi-line paste, `<<EOF` heredocs,
     `> file` to save output into `workspace/`, `kubectl edit` with an inline editor.
   - *YAML editor*: write or paste manifests, Apply / Dry-run / Delete, save and open workspace
     files, and "Load from cluster" to edit a live object.
