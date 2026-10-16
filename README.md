@@ -19,6 +19,7 @@ network (the addresses are printed at startup). No dependencies to install (Node
 | `PORT`         | `8377`     | Port to listen on                               |
 | `HOST`         | `0.0.0.0`  | Bind address; `127.0.0.1` for this machine only |
 | `KUBE_CONTEXT` | `minikube` | kubectl context every command is pinned to      |
+| `PUBLIC_HOST`  | *(unset)*  | Extra hostname to accept, served over https by a proxy or tunnel in front (e.g. `cka.example.com`) |
 
 ## What is in it
 
@@ -30,6 +31,9 @@ network (the addresses are printed at startup). No dependencies to install (Node
 - **Scenarios** — 16 exam questions as candidates report them, adapted from DumbITGuy's "CKA 2025"
   YouTube playlist: 13 graded labs and 3 walkthroughs, each linking to the video it follows. They
   use the exam's own resource names and are kept out of the mock exam.
+- **Quiz** — flashcard-style multiple-choice questions across the five domains. Pick domains and a
+  deck size, answer with a click or 1–4 / A–D, and read the explanation and docs link after each card.
+  Results per question are kept in the browser, so you can review only the ones you missed.
 - **Mock exam** — 15 random lab tasks weighted like the exam, 120-minute timer, hints hidden,
   graded at the end against the 66% pass mark.
 - **Cheat sheet** — click a command to drop it into the terminal.

@@ -13,6 +13,8 @@ const PORT = Number(process.env.PORT || 8377);
 // port can run kubectl against the cluster — set HOST=127.0.0.1 on networks you don't trust.
 const HOST = process.env.HOST || '0.0.0.0';
 const KUBE_CONTEXT = process.env.KUBE_CONTEXT || 'minikube';
+// Hostname this is published under behind an https proxy or tunnel, e.g. cka.example.com.
+const PUBLIC_HOST = (process.env.PUBLIC_HOST || '').toLowerCase().replace(/^https?:\/\//, '').replace(/\/+$/, '');
 const PUBLIC_DIR = path.join(__dirname, 'public');
 const WORKSPACE = path.join(__dirname, 'workspace');
 const EXEC_TIMEOUT_MS = 30_000;
@@ -23,6 +25,14 @@ const EDIT_IDLE_MS = 30 * 60_000;
 
 const { tasks, domains, examInfo, cheatsheet } = require('./tasks');
 const { scenarios, scenarioSource } = require('./scenarios');
+// The quiz bank is optional: without quiz.js the server still starts and the Quiz tab is empty.
+let quiz = [];
+try {
+  ({ quiz } = require('./quiz'));
+} catch (err) {
+  if (err.code !== 'MODULE_NOT_FOUND' || !err.message.includes("'./quiz'")) console.warn(`quiz.js not loaded: ${err.message}`);
+}
+if (!Array.isArray(quiz)) quiz = [];
 const taskById = new Map([...tasks, ...scenarios].map((t) => [t.id, t]));
 
 fs.mkdirSync(WORKSPACE, { recursive: true });
@@ -405,12 +415,14 @@ function allowedHosts() {
 
 // The Host header must be one of this machine's own names/addresses (an attacker's domain
 // rebinding to us fails this), and writes must come from the page served by that same host.
+// PUBLIC_HOST is the one extra name accepted, for a reverse proxy or tunnel that serves it over https.
 function isTrusted(req) {
   const host = (req.headers.host || '').toLowerCase();
-  if (!allowedHosts().includes(host)) return false;
+  const isPublic = PUBLIC_HOST !== '' && host === PUBLIC_HOST;
+  if (!isPublic && !allowedHosts().includes(host)) return false;
   if (req.method === 'GET') return true;
   const origin = req.headers.origin;
-  if (origin && origin.toLowerCase() !== `http://${host}`) return false;
+  if (origin && origin.toLowerCase() !== `${isPublic ? 'https' : 'http'}://${host}`) return false;
   return req.headers['x-cka-lab'] === '1' && /^application\/json/.test(req.headers['content-type'] || '');
 }
 
@@ -419,7 +431,7 @@ async function api(req, res, url) {
   const m = req.method;
 
   if (m === 'GET' && p === '/api/meta') {
-    return send(res, 200, { tasks, scenarios, scenarioSource, domains, examInfo, cheatsheet, context: KUBE_CONTEXT, helm: HAS_HELM });
+    return send(res, 200, { tasks, scenarios, scenarioSource, quiz, domains, examInfo, cheatsheet, context: KUBE_CONTEXT, helm: HAS_HELM });
   }
   if (m === 'GET' && p === '/api/status') {
     const [ver, nodes] = await Promise.all([
@@ -507,6 +519,7 @@ server.listen(PORT, HOST, () => {
       for (const a of addrs || []) if (a.family === 'IPv4' && !a.internal) console.log(`                   http://${a.address}:${PORT}`);
     }
   }
+  if (PUBLIC_HOST) console.log(`                   https://${PUBLIC_HOST} (via your proxy or tunnel)`);
   console.log(`kubectl context: ${KUBE_CONTEXT}${HAS_HELM ? '  (helm available)' : ''}`);
   console.log(`workspace:       ${WORKSPACE}`);
 });

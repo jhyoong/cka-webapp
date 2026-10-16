@@ -218,6 +218,56 @@ td.num { text-align: right; font-variant-numeric: tabular-nums; }
 .cheat .k { color: var(--muted); font-size: 0.88rem; }
 .cheat button { text-align: left; font: 12.5px/1.5 var(--mono); white-space: pre-wrap; overflow-wrap: anywhere; background: var(--surface); padding: 0.3rem 0.6rem; }
 
+/* ── quiz ── */
+.quiz-domains { list-style: none; margin: 0; padding: 0; }
+.quiz-domains li { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 0.55rem 0.8rem 0.1rem; margin-bottom: 0.4rem; }
+.quiz-domains label { display: flex; align-items: baseline; gap: 0.6rem; flex-wrap: wrap; cursor: pointer; }
+.quiz-domains .n { font-weight: 600; flex: 1; min-width: 10ch; }
+.quiz-domains .c, .quiz-domains .m { color: var(--muted); font-size: 0.82rem; white-space: nowrap; }
+.quiz-domains .bar { margin: 0.45rem 0; height: 4px; }
+.quiz-opts-row { display: flex; flex-wrap: wrap; gap: 0.6rem 1.2rem; align-items: center; }
+.quiz-opts-row .filters { margin: 0; }
+.quiz-opts-row label { font-size: 0.9rem; cursor: pointer; white-space: nowrap; }
+input[type="checkbox"] { accent-color: var(--accent); }
+.crumbs button.link { font-size: inherit; }
+.quiz-count { font-family: var(--mono); font-variant-numeric: tabular-nums; }
+.quiz-card { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 1.1rem 1.2rem 0.6rem; margin-top: 0.8rem; animation: quiz-in 0.22s ease-out; }
+.quiz-card .badges { margin-bottom: 0.7rem; }
+.quiz-q { font-size: 1.05rem; font-weight: 500; white-space: pre-line; overflow-wrap: anywhere; }
+.quiz-options { list-style: none; margin: 0.9rem 0 0.6rem; padding: 0; }
+.quiz-options li { margin-bottom: 0.45rem; }
+.quiz-opt {
+  display: grid; grid-template-columns: 1.7rem minmax(0, 1fr) auto; gap: 0.6rem; align-items: center;
+  width: 100%; text-align: left; white-space: normal; font-size: 0.93rem; padding: 0.55rem 0.75rem;
+  background: var(--bg); border-radius: 8px; transition: border-color 0.15s, background-color 0.2s, opacity 0.2s;
+}
+.quiz-opt .k { width: 1.6rem; height: 1.6rem; border-radius: 6px; border: 1px solid var(--border); display: grid; place-items: center; font: 600 0.78rem var(--mono); color: var(--muted); }
+.quiz-opt .t { overflow-wrap: anywhere; }
+.quiz-opt .mark { font-weight: 700; }
+.quiz-opt:disabled { opacity: 1; cursor: default; }
+.quiz-opt.right { border-color: var(--ok); background: color-mix(in srgb, var(--ok) 13%, var(--bg)); }
+.quiz-opt.right .k, .quiz-opt.right .mark { color: var(--ok); border-color: var(--ok); }
+.quiz-opt.wrong { border-color: var(--bad); background: color-mix(in srgb, var(--bad) 13%, var(--bg)); }
+.quiz-opt.wrong .k, .quiz-opt.wrong .mark { color: var(--bad); border-color: var(--bad); }
+.quiz-opt.dim { opacity: 0.55; }
+.quiz-reveal { border-top: 1px solid var(--border); padding-top: 0.7rem; margin-top: 0.4rem; animation: quiz-reveal 0.3s ease-out; transform-origin: top; }
+.quiz-reveal .verdict { margin-top: 0; }
+.quiz-expl { white-space: pre-line; }
+.quiz-missed { padding-left: 1.3rem; }
+.quiz-missed > li { margin-bottom: 1.1rem; }
+.quiz-missed p { margin-bottom: 0.3rem; }
+.quiz-missed .quiz-q { font-size: 0.97rem; }
+.quiz-missed .ans.right { color: var(--ok); }
+.quiz-missed .ans.wrong { color: var(--bad); }
+.quiz-missed .ans span { color: var(--text); }
+td .bar { margin: 0; min-width: 60px; }
+@keyframes quiz-in { from { opacity: 0; transform: translateY(6px); } }
+@keyframes quiz-reveal { from { opacity: 0; transform: rotateX(-12deg) translateY(-4px); } }
+@media (prefers-reduced-motion: reduce) {
+  .quiz-card, .quiz-reveal { animation: none; }
+  .quiz-opt { transition: none; }
+}
+
 @media (max-width: 980px) {
   .layout { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr) 46vh; }
   .layout.no-console { grid-template-rows: minmax(0, 1fr); }
@@ -226,4 +276,5 @@ td.num { text-align: right; font-variant-numeric: tabular-nums; }
   .brand { font-size: 0; }
   .brand-mark { font-size: 1.2rem; }
   #cluster-text { display: none; }
+  .quiz-card { padding: 0.9rem 0.85rem 0.4rem; }
 }

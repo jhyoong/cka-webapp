@@ -21,6 +21,7 @@ function h(tag, attrs = {}, ...children) {
 }
 
 const esc = (s) => s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+const codeText = (s) => esc(String(s ?? '')).replace(/`([^`]+)`/g, '<code>$1</code>'); // quiz texts: `code` only
 const inline = (s) => esc(s).replace(/`([^`]+)`/g, '<code>$1</code>').replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
 
 // Tiny markdown subset used by task texts: paragraphs, "- " lists, "1. " lists, `code`, **bold**.
@@ -83,6 +84,9 @@ let META = null;
 let progress = store.get('cka.progress', {}); // { taskId: timestamp }
 let exam = store.get('cka.exam', null); // { ids, startedAt, minutes, finishedAt, results }
 const lastChecks = {}; // taskId -> last verify result (session only)
+let quizHist = store.get('cka.quiz', {}); // { questionId: { seen, correct, last, at } }
+let quizRun = null; // current deck (session only): { ids, i, answers: { id: { order, picked } }, finished }
+let quizKeys = null; // { pick, next } while a quiz card is on screen
 const EXAM_MINUTES = 120;
 const EXAM_MIX = { trbl: 4, arch: 3, net: 3, work: 3, stor: 2 };
 const PASS_MARK = 66;
@@ -411,6 +415,7 @@ function renderOverview() {
     h('p', { class: 'lede' }, `${done} of ${total} tasks completed. Tasks follow the official curriculum domains and the topics candidates report from the current exam; lab tasks are set up and graded on your local cluster.`),
     next && h('p', {}, h('a', { href: '#/task/' + next.id }, `Continue with: ${next.title} →`)),
     h('p', {}, h('a', { href: '#/scenarios' }, `Exam scenarios: ${META.scenarios.filter((t) => progress[t.id]).length} of ${META.scenarios.length} done →`)),
+    quizBank().length > 0 && h('p', {}, h('a', { href: '#/quiz' }, `Quiz: ${quizStats(quizBank()).right} of ${quizBank().length} questions answered correctly on the latest try →`)),
 
     h('h2', {}, 'Exam domains'),
     ...META.domains.map((d) => {
@@ -741,6 +746,283 @@ function renderExam() {
   );
 }
 
+// ───────────── quiz ─────────────
+const QUIZ_SIZES = [10, 20, 50, 0]; // 0 = all
+const KEYS = 'ABCD';
+const quizBank = () => META.quiz || [];
+const quizById = (id) => quizBank().find((q) => q.id === id);
+const shortDomain = (d) => (d ? d.name.split(',')[0] : 'Other');
+
+function shuffled(arr) {
+  const a = [...arr];
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+  return a;
+}
+
+// right / missed count the latest attempt at each question
+function quizStats(qs) {
+  const seen = qs.filter((q) => quizHist[q.id]);
+  return { total: qs.length, seen: seen.length, right: seen.filter((q) => quizHist[q.id].last).length, missed: seen.filter((q) => !quizHist[q.id].last).length };
+}
+
+function recordQuiz(id, ok) {
+  const r = quizHist[id] || { seen: 0, correct: 0 };
+  quizHist[id] = { seen: r.seen + 1, correct: r.correct + (ok ? 1 : 0), last: ok, at: Date.now() };
+  store.set('cka.quiz', quizHist);
+}
+
+function startQuiz(ids, shuffle = true) {
+  const order = shuffle ? shuffled(ids) : ids;
+  quizRun = { ids: order, i: 0, finished: false, answers: Object.fromEntries(order.map((id) => [id, { order: shuffled(quizById(id).options.map((_, i) => i)), picked: null }])) };
+  renderQuiz();
+  view.scrollTop = 0;
+}
+
+const quizCorrect = (q) => {
+  const a = quizRun.answers[q.id];
+  return a.picked != null && a.order[a.picked] === q.answer;
+};
+
+function renderQuiz() {
+  quizKeys = null;
+  if (!quizRun) renderQuizSetup();
+  else if (quizRun.finished) renderQuizEnd();
+  else renderQuizCard();
+}
+
+function renderQuizSetup() {
+  const bank = quizBank();
+  if (!bank.length) {
+    show(h('h1', {}, 'Quiz'), h('p', { class: 'lede' }, 'No quiz questions are loaded. Add quiz.js at the repository root and restart the server.'));
+    return;
+  }
+  const prefs = store.get('cka.quiz.prefs', {});
+  const sel = new Set(Array.isArray(prefs.domains) ? prefs.domains : META.domains.map((d) => d.id));
+  let size = QUIZ_SIZES.includes(prefs.size) ? prefs.size : 20;
+  let shuffle = prefs.shuffle !== false;
+  let missedOnly = !!prefs.missed;
+  const pool = () => bank.filter((q) => sel.has(q.domain) && (!missedOnly || quizHist[q.id]?.last === false));
+
+  const count = h('span', { class: 'status-line' });
+  const start = h('button', { class: 'primary' }, 'Start');
+  start.addEventListener('click', () => {
+    const ids = pool().map((q) => q.id);
+    startQuiz((shuffle ? shuffled(ids) : ids).slice(0, size || ids.length), false);
+  });
+  const update = () => {
+    const n = pool().length;
+    const deck = size ? Math.min(size, n) : n;
+    count.textContent = n ? `${deck} card${deck === 1 ? '' : 's'} from ${n} matching question${n === 1 ? '' : 's'}` : missedOnly ? 'No missed questions in the chosen domains.' : 'Choose at least one domain.';
+    start.disabled = !n;
+    store.set('cka.quiz.prefs', { domains: [...sel], size, shuffle, missed: missedOnly });
+  };
+
+  const all = quizStats(bank);
+  const reset = h('button', { class: 'link' }, 'reset history');
+  reset.addEventListener('click', () => {
+    if (!confirm('Forget every quiz answer you have given so far?')) return;
+    quizHist = {};
+    store.set('cka.quiz', quizHist);
+    renderQuizSetup();
+  });
+
+  show(
+    h('h1', {}, 'Quiz'),
+    h('p', { class: 'lede' }, `Flashcard questions on the CKA curriculum — one at a time, with the reasoning and a docs link after each answer. ${bank.length} questions; you have seen ${all.seen} and got ${all.right} right on your latest try.`),
+    h('h3', {}, 'Domains'),
+    h(
+      'ul',
+      { class: 'quiz-domains' },
+      META.domains.map((d) => {
+        const qs = bank.filter((q) => q.domain === d.id);
+        const s = quizStats(qs);
+        const cb = h('input', { type: 'checkbox', checked: qs.length > 0 && sel.has(d.id), disabled: !qs.length });
+        cb.addEventListener('change', () => {
+          if (cb.checked) sel.add(d.id);
+          else sel.delete(d.id);
+          update();
+        });
+        return h(
+          'li',
+          {},
+          h(
+            'label',
+            {},
+            cb,
+            h('span', { class: 'n d-' + d.id }, shortDomain(d)),
+            h('span', { class: 'c' }, `${qs.length} question${qs.length === 1 ? '' : 's'}`),
+            h('span', { class: 'm' }, s.seen ? `${s.right}/${s.total} mastered${s.missed ? ` · ${s.missed} missed` : ''}` : 'not started')
+          ),
+          h('div', { class: 'bar', title: `${s.right} of ${s.total} answered correctly on the latest try` }, h('i', { class: 'b-' + d.id, style: `width:${s.total ? (100 * s.right) / s.total : 0}%` }))
+        );
+      })
+    ),
+    h('h3', {}, 'Deck'),
+    h(
+      'div',
+      { class: 'quiz-opts-row' },
+      h('div', { class: 'filters' }, QUIZ_SIZES.map((n) => {
+        const b = h('button', { class: 'chip' + (size === n ? ' on' : '') }, n ? `${n} cards` : 'All');
+        b.addEventListener('click', () => {
+          size = n;
+          b.parentNode.querySelectorAll('.chip').forEach((c) => c.classList.toggle('on', c === b));
+          update();
+        });
+        return b;
+      })),
+      h('label', {}, h('input', { type: 'checkbox', checked: shuffle, onchange: (e) => ((shuffle = e.target.checked), update()) }), ' Shuffle'),
+      h('label', {}, h('input', { type: 'checkbox', checked: missedOnly, disabled: !all.missed && !missedOnly, onchange: (e) => ((missedOnly = e.target.checked), update()) }), ` Review missed only (${all.missed})`)
+    ),
+    h('div', { class: 'actions' }, start, count),
+    h('p', { class: 'muted' }, 'Answer with 1–4 or A–D, go on with Enter or →. Your answers are kept in this browser. ', all.seen > 0 && reset)
+  );
+  update();
+}
+
+function renderQuizCard() {
+  const run = quizRun;
+  const id = run.ids[run.i];
+  const q = quizById(id);
+  const a = run.answers[id];
+  const d = domainById(q.domain);
+  const answered = a.picked != null;
+  const correctPos = a.order.indexOf(q.answer);
+  const ok = a.picked === correctPos;
+  const last = run.i === run.ids.length - 1;
+  const hist = quizHist[id];
+
+  const pick = (pos) => {
+    if (a.picked != null || pos < 0 || pos >= a.order.length) return;
+    a.picked = pos;
+    recordQuiz(id, pos === correctPos);
+    renderQuizCard();
+    $('#quiz-next')?.focus({ preventScroll: true });
+  };
+  const next = () => {
+    if (a.picked == null) return;
+    if (++run.i >= run.ids.length) run.finished = true;
+    renderQuiz();
+    view.scrollTop = 0;
+  };
+  const quit = () => {
+    const done = run.ids.filter((x) => run.answers[x].picked != null);
+    if (done.length < run.ids.length && done.length && !confirm('End this deck now? Unanswered cards are dropped.')) return;
+    if (done.length) Object.assign(run, { ids: done, finished: true });
+    else quizRun = null;
+    renderQuiz();
+  };
+  quizKeys = { pick, next };
+
+  const right = run.ids.slice(0, run.i + 1).filter((x) => quizCorrect(quizById(x))).length;
+  show(
+    h('div', { class: 'crumbs' }, h('button', { class: 'link', onclick: quit }, '← End deck'), h('span', { class: 'quiz-count' }, `${run.i + 1} / ${run.ids.length}`, h('span', { class: 'muted' }, ` · ${right} correct`))),
+    h('div', { class: 'bar' }, h('i', { class: 'b-' + q.domain, style: `width:${(100 * (run.i + (answered ? 1 : 0))) / run.ids.length}%` })),
+    h(
+      'div',
+      { class: 'quiz-card' + (answered ? ' answered' : '') },
+      h('div', { class: 'badges' }, h('span', { class: 'tag d-' + q.domain }, `${shortDomain(d)} · ${q.topic}`), hist && h('span', {}, `seen ${hist.seen}× · ${hist.correct} right`)),
+      h('p', { class: 'quiz-q', html: codeText(q.question) }),
+      h(
+        'ol',
+        { class: 'quiz-options' },
+        a.order.map((orig, pos) => {
+          const state = !answered ? '' : pos === correctPos ? ' right' : pos === a.picked ? ' wrong' : ' dim';
+          return h(
+            'li',
+            {},
+            h(
+              'button',
+              { class: 'quiz-opt' + state, disabled: answered, 'aria-keyshortcuts': `${pos + 1} ${KEYS[pos]}`, onclick: () => pick(pos) },
+              h('span', { class: 'k' }, KEYS[pos] || pos + 1),
+              h('span', { class: 't', html: codeText(q.options[orig]) }),
+              answered && (pos === correctPos || pos === a.picked) && h('span', { class: 'mark' }, pos === correctPos ? '✓' : '✗')
+            )
+          );
+        })
+      ),
+      answered &&
+        h(
+          'div',
+          { class: 'quiz-reveal', role: 'status' },
+          h('p', { class: 'verdict ' + (ok ? 'pass' : 'fail') }, ok ? '✓ Correct' : `✗ Not quite — the answer is ${KEYS[correctPos]}`),
+          h('p', { class: 'quiz-expl', html: codeText(q.explanation) }),
+          /^https?:\/\//.test(q.ref || '') && h('p', {}, h('a', { href: q.ref, target: '_blank', rel: 'noopener' }, 'Documentation ↗'))
+        )
+    ),
+    h('div', { class: 'actions' }, h('button', { id: 'quiz-next', class: 'primary', disabled: !answered, onclick: next }, last ? 'See results' : 'Next →'), h('span', { class: 'status-line' }, answered ? 'Enter or → for the next card' : '1–4 or A–D to answer'))
+  );
+}
+
+function renderQuizEnd() {
+  const qs = quizRun.ids.map(quizById);
+  const right = qs.filter(quizCorrect).length;
+  const pct = Math.round((100 * right) / qs.length);
+  const missed = qs.filter((q) => !quizCorrect(q));
+  const optHtml = (q, orig) => codeText(q.options[orig]);
+  show(
+    h('h1', {}, 'Quiz result'),
+    h('div', { class: 'score ' + (pct >= PASS_MARK ? 'pass' : 'fail') }, pct + '%'),
+    h('p', {}, `${right} of ${qs.length} correct.`),
+    h(
+      'table',
+      {},
+      h('thead', {}, h('tr', {}, h('th', {}, 'Domain'), h('th', {}, 'Correct'), h('th', {}, ''))),
+      h(
+        'tbody',
+        {},
+        META.domains
+          .map((d) => [d, qs.filter((q) => q.domain === d.id)])
+          .filter(([, dq]) => dq.length)
+          .map(([d, dq]) => {
+            const r = dq.filter(quizCorrect).length;
+            return h('tr', {}, h('td', { class: 'd-' + d.id }, shortDomain(d)), h('td', { class: 'num' }, `${r} / ${dq.length}`), h('td', {}, h('div', { class: 'bar' }, h('i', { class: 'b-' + d.id, style: `width:${(100 * r) / dq.length}%` }))));
+          })
+      )
+    ),
+    missed.length > 0 && [
+      h('h2', {}, `Missed (${missed.length})`),
+      h(
+        'ol',
+        { class: 'quiz-missed' },
+        missed.map((q) => {
+          const a = quizRun.answers[q.id];
+          return h(
+            'li',
+            {},
+            h('p', { class: 'quiz-q', html: codeText(q.question) }),
+            h('p', { class: 'ans right' }, '✓ ', h('span', { html: optHtml(q, q.answer) })),
+            a.picked != null && h('p', { class: 'ans wrong' }, '✗ ', h('span', { html: optHtml(q, a.order[a.picked]) })),
+            h('p', { class: 'muted quiz-expl', html: codeText(q.explanation) }),
+            /^https?:\/\//.test(q.ref || '') && h('p', {}, h('a', { href: q.ref, target: '_blank', rel: 'noopener' }, 'Documentation ↗'))
+          );
+        })
+      ),
+    ],
+    h(
+      'div',
+      { class: 'actions' },
+      missed.length > 0 && h('button', { class: 'primary', onclick: () => startQuiz(missed.map((q) => q.id)) }, `Retry missed (${missed.length})`),
+      h('button', { class: missed.length ? '' : 'primary', onclick: () => ((quizRun = null), renderQuiz()) }, 'New deck')
+    )
+  );
+}
+
+// Quiz shortcuts — never while typing in the console, an input or an editor.
+document.addEventListener('keydown', (e) => {
+  if (!quizKeys || e.ctrlKey || e.metaKey || e.altKey || e.repeat) return;
+  const t = e.target;
+  if (t instanceof Element && t.closest('input, textarea, select, [contenteditable]:not([contenteditable="false"]), #console')) return;
+  const k = e.key.toLowerCase();
+  if (/^[1-4]$/.test(k)) quizKeys.pick(Number(k) - 1);
+  else if (/^[a-d]$/.test(k)) quizKeys.pick(k.charCodeAt(0) - 97);
+  else if (k === 'arrowright' || (k === 'enter' && !(t instanceof Element && t.closest('button, a')))) quizKeys.next();
+  else return;
+  e.preventDefault();
+});
+
 function renderCheats() {
   show(
     h('h1', {}, 'Cheat sheet'),
@@ -756,10 +1038,12 @@ function route() {
   const [, name = 'overview', arg] = location.hash.split('/');
   const nav = name !== 'task' ? name : META.scenarios.some((t) => t.id === arg) ? 'scenarios' : 'tasks';
   $$('#nav a').forEach((a) => a.classList.toggle('active', a.dataset.view === nav));
+  quizKeys = null;
   if (name === 'tasks') renderTasks(arg || 'all');
   else if (name === 'task') renderTask(arg);
   else if (name === 'scenarios') renderScenarios();
   else if (name === 'exam') renderExam();
+  else if (name === 'quiz') renderQuiz();
   else if (name === 'cheats') renderCheats();
   else renderOverview();
   view.scrollTop = 0;
