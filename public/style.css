@@ -98,6 +98,11 @@ button.link { background: none; border: 0; color: var(--accent); padding: 0; }
 .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); flex: none; }
 .cluster.up .dot { background: var(--ok); }
 .cluster.down .dot { background: var(--bad); }
+.cluster-state { display: flex; align-items: center; gap: 0.5rem; }
+.cluster-state .dot.up { background: var(--ok); }
+.cluster-state .dot.down { background: var(--bad); }
+.cluster-actions { display: flex; flex-wrap: wrap; gap: 0.5rem; margin: 1rem 0; }
+.job-log { max-height: 26rem; overflow-y: auto; white-space: pre-wrap; overflow-wrap: anywhere; }
 .timer { font-family: var(--mono); font-size: 0.85rem; padding: 0.3rem 0.6rem; border: 1px solid var(--warn); color: var(--warn); border-radius: 6px; font-variant-numeric: tabular-nums; }
 .timer.over { border-color: var(--bad); color: var(--bad); }
 

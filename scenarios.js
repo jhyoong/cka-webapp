@@ -5,7 +5,7 @@
 // Names follow the videos where they name something; scenarios the videos solve in the default
 // namespace get a namespace of their own here so that cleanup can remove them safely.
 
-const { NGINX, BUSYBOX, DOCS, ns, deploy, delNs } = require('./tasks').helpers;
+const { NGINX, BUSYBOX, DOCS, PROFILE, ns, deploy, delNs } = require('./tasks').helpers;
 
 const YT = 'https://www.youtube.com/watch?v=';
 
@@ -540,8 +540,8 @@ Cleanup removes the \`permission\` taint from every node again.`,
     ],
     hints: ['`kubectl taint nodes <node> key=value:Effect` — the docs page "Taints and Tolerations" opens with exactly this command.', 'The same page has a Pod manifest with a `tolerations:` block; change key, value and effect. `operator: Equal` compares the value.', 'To see the taint work, pin a Pod without a toleration to that node (`nodeSelector: kubernetes.io/hostname`): it stays Pending.'],
     solution: `kubectl get nodes
-kubectl taint nodes minikube-m03 permission=granted:NoSchedule
-kubectl describe node minikube-m03               # Taints: permission=granted:NoSchedule
+kubectl taint nodes ${PROFILE}-m03 permission=granted:NoSchedule
+kubectl describe node ${PROFILE}-m03               # Taints: permission=granted:NoSchedule
 
 kubectl apply -f - <<EOF
 apiVersion: v1
@@ -561,7 +561,7 @@ spec:
 EOF
 kubectl -n taints get pod nginx -o wide
 
-# remove the taint again: kubectl taint nodes minikube-m03 permission-`,
+# remove the taint again: kubectl taint nodes ${PROFILE}-m03 permission-`,
     cleanup: [...delNs('taints'), ['taint', 'nodes', '--all', 'permission-']],
     docs: `${DOCS}/concepts/scheduling-eviction/taint-and-toleration/`,
     videos: [['CKA Exam 2025 Q-10: Taints & Tolerations Made EASY', YT + 'oy6Mdqt1-jk']],

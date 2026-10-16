@@ -23,7 +23,7 @@ const EDIT_HELPER = path.join(__dirname, 'edit-helper.js');
 const EDIT_MARK = /\u0001cka-edit (.*)\n/;
 const EDIT_IDLE_MS = 30 * 60_000;
 
-const { tasks, domains, examInfo, cheatsheet } = require('./tasks');
+const { tasks, domains, examInfo, cheatsheet, helpers } = require('./tasks');
 const { scenarios, scenarioSource } = require('./scenarios');
 // The quiz bank is optional: without quiz.js the server still starts and the Quiz tab is empty.
 let quiz = [];
@@ -37,6 +37,10 @@ const taskById = new Map([...tasks, ...scenarios].map((t) => [t.id, t]));
 
 fs.mkdirSync(WORKSPACE, { recursive: true });
 const HAS_HELM = spawnSync('helm', ['version', '--short'], { stdio: 'ignore' }).status === 0;
+const HAS_MINIKUBE = spawnSync('minikube', ['version', '--short'], { stdio: 'ignore' }).status === 0;
+const PROFILE = helpers.PROFILE;
+// Used when the Cluster page starts the profile; for an existing profile minikube keeps its own settings.
+const MINIKUBE_START_ARGS = (process.env.MINIKUBE_START_ARGS || '--driver=docker --container-runtime=containerd --nodes=3 --cpus=2 --memory=2200 --addons=metrics-server').split(/\s+/).filter(Boolean);
 
 // ---------- process helpers ----------
 
@@ -77,6 +81,66 @@ function run(bin, args, { stdin, timeout = EXEC_TIMEOUT_MS } = {}) {
 }
 
 const kubectl = (args, opts) => run('kubectl', ['--context', KUBE_CONTEXT, ...args], opts);
+
+// ---------- minikube profile control ----------
+// One start/stop/delete at a time. It runs in the background (start takes minutes, longer than a
+// proxy or tunnel holds a request open) and the Cluster page polls its log.
+
+let clusterJob = null; // { action, running, log, code, startedAt, endedAt }
+const ANSI = /\x1b\[[0-9;?]*[A-Za-z]/g;
+
+function clusterArgs(action) {
+  // --keep-context: never move the user's current kubectl context onto this profile
+  if (action === 'start') return ['start', '-p', PROFILE, '--keep-context', ...MINIKUBE_START_ARGS];
+  return [action, '-p', PROFILE];
+}
+
+// minikube start (even with --keep-context when restarting a stopped profile) and delete rewrite
+// the kubeconfig's current-context. Put the user's own context back afterwards.
+async function restoreContext(before) {
+  if (!before) return;
+  const now = (await run('kubectl', ['config', 'current-context'])).stdout.trim();
+  if (now !== before) await run('kubectl', ['config', 'use-context', before]);
+}
+
+async function startClusterJob(action) {
+  const args = clusterArgs(action);
+  const job = { action, running: true, log: `$ minikube ${args.join(' ')}\n`, code: null, startedAt: Date.now(), endedAt: null };
+  clusterJob = job; // claim the slot before the first await
+  const before = (await run('kubectl', ['config', 'current-context'])).stdout.trim();
+  const child = spawn('minikube', args, { cwd: WORKSPACE, env: { ...process.env, MINIKUBE_IN_STYLE: 'false' } });
+  const add = (d) => {
+    if (job.log.length < MAX_OUTPUT) job.log += String(d).replace(ANSI, '');
+  };
+  const done = async (code) => {
+    if (job.code !== null) return;
+    job.code = code;
+    await restoreContext(before);
+    job.running = false;
+    job.endedAt = Date.now();
+  };
+  child.stdout.on('data', add);
+  child.stderr.on('data', add);
+  child.on('error', (err) => {
+    add(`minikube: ${err.message}\n`);
+    done(127);
+  });
+  child.on('close', (code) => done(code ?? 1));
+  child.stdin.end();
+}
+
+// Per-node state from "minikube status": an array for multi-node profiles, an object for one node.
+async function clusterState() {
+  if (!HAS_MINIKUBE) return { exists: false, nodes: [], error: 'minikube is not installed on this machine' };
+  const r = await run('minikube', ['status', '-p', PROFILE, '-o', 'json'], { timeout: 20_000 });
+  if (r.code === 85) return { exists: false, nodes: [] };
+  try {
+    const nodes = [].concat(JSON.parse(r.stdout)).map((n) => ({ name: n.Name, host: n.Host, kubelet: n.Kubelet, apiserver: n.APIServer, worker: !!n.Worker }));
+    return { exists: true, nodes };
+  } catch {
+    return { exists: true, nodes: [], error: (r.stderr || r.stdout).replace(ANSI, '').trim().split('\n').pop() };
+  }
+}
 
 // ---------- kubectl edit sessions ----------
 // kubectl edit (and friends) run with edit-helper.js as their editor: kubectl does the fetching,
@@ -431,7 +495,7 @@ async function api(req, res, url) {
   const m = req.method;
 
   if (m === 'GET' && p === '/api/meta') {
-    return send(res, 200, { tasks, scenarios, scenarioSource, quiz, domains, examInfo, cheatsheet, context: KUBE_CONTEXT, helm: HAS_HELM });
+    return send(res, 200, { tasks, scenarios, scenarioSource, quiz, domains, examInfo, cheatsheet, context: KUBE_CONTEXT, helm: HAS_HELM, profile: PROFILE, minikube: HAS_MINIKUBE });
   }
   if (m === 'GET' && p === '/api/status') {
     const [ver, nodes] = await Promise.all([
@@ -444,6 +508,18 @@ async function api(req, res, url) {
     } catch {}
     const nodeList = nodes.code === 0 ? nodes.stdout.trim().split(/\s+/).filter(Boolean).map((s) => ({ name: s.split('=')[0], ready: s.split('=')[1] === 'True' })) : [];
     return send(res, 200, { context: KUBE_CONTEXT, up: nodes.code === 0, server, nodes: nodeList, error: nodes.code === 0 ? null : (nodes.stderr || ver.stderr).trim().split('\n').pop() });
+  }
+  if (m === 'GET' && p === '/api/cluster') {
+    return send(res, 200, { profile: PROFILE, context: KUBE_CONTEXT, startArgs: clusterArgs('start'), ...(await clusterState()), job: clusterJob });
+  }
+  const cm = p.match(/^\/api\/cluster\/(start|stop|delete)$/);
+  if (m === 'POST' && cm) {
+    if (!HAS_MINIKUBE) return send(res, 400, { error: 'minikube is not installed on this machine.' });
+    if (clusterJob?.running) return send(res, 409, { error: `minikube ${clusterJob.action} is still running.` });
+    // deleting is irreversible: the request has to name the profile it means
+    if (cm[1] === 'delete' && (await readJson(req)).profile !== PROFILE) return send(res, 400, { error: `Type the profile name "${PROFILE}" to confirm.` });
+    await startClusterJob(cm[1]);
+    return send(res, 202, { job: clusterJob });
   }
   if (m === 'POST' && p === '/api/exec') {
     const { command, stdin } = await readJson(req);
@@ -521,5 +597,6 @@ server.listen(PORT, HOST, () => {
   }
   if (PUBLIC_HOST) console.log(`                   https://${PUBLIC_HOST} (via your proxy or tunnel)`);
   console.log(`kubectl context: ${KUBE_CONTEXT}${HAS_HELM ? '  (helm available)' : ''}`);
+  console.log(`minikube:        ${HAS_MINIKUBE ? `profile ${PROFILE}` : 'not installed (Cluster page disabled)'}`);
   console.log(`workspace:       ${WORKSPACE}`);
 });

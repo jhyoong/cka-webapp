@@ -111,7 +111,7 @@ async function refreshStatus() {
     btn.className = 'cluster ' + (s.up ? 'up' : 'down');
     const ready = s.nodes.filter((n) => n.ready).length;
     $('#cluster-text').textContent = s.up ? `${s.context} · ${s.server} · ${ready}/${s.nodes.length} nodes` : `${s.context} · unreachable`;
-    btn.title = s.up ? 'Cluster reachable — click to refresh' : `${s.error || 'Cluster unreachable'}\nStart it with: minikube start`;
+    btn.title = s.up ? 'Cluster reachable — click to refresh' : `${s.error || 'Cluster unreachable'}\nStart it on the Cluster page, or: minikube start -p ${META?.profile || s.context}`;
   } catch {
     btn.className = 'cluster down';
     $('#cluster-text').textContent = 'server offline';
@@ -1023,10 +1023,88 @@ document.addEventListener('keydown', (e) => {
   e.preventDefault();
 });
 
+// ───────────── cluster control ─────────────
+let clusterPoll = null; // timer while a minikube job runs and the Cluster page is open
+let lastJobEnd = null; // refresh the top-bar status once per finished job
+
+const ago = (ms) => (ms < 60_000 ? `${Math.round(ms / 1000)}s` : `${Math.floor(ms / 60_000)}m ${Math.round((ms % 60_000) / 1000)}s`);
+
+async function clusterAction(action) {
+  let body = {};
+  if (action === 'delete') {
+    const typed = prompt(`Delete the minikube profile "${META.profile}"? Every node and everything on the cluster is removed for good.\n\nType the profile name to confirm:`);
+    if (typed === null) return;
+    body = { profile: typed.trim() };
+  } else if (action === 'stop' && !confirm(`Stop the minikube profile "${META.profile}"? Lab resources are kept and come back with Start.`)) {
+    return;
+  }
+  const r = await api('/api/cluster/' + action, 'POST', body);
+  if (r.error) alert(r.error);
+  renderCluster();
+}
+
+async function renderCluster() {
+  clearTimeout(clusterPoll);
+  if (!META.minikube) {
+    return show(h('h1', {}, 'Cluster'), h('p', { class: 'lede' }, 'minikube is not installed on the machine running this server, so the cluster cannot be controlled from here.'));
+  }
+  const c = await api('/api/cluster');
+  if (location.hash.split('/')[1] !== 'cluster') return; // navigated away while loading
+  const job = c.job;
+  const running = !!job?.running;
+  const hosts = c.nodes.map((n) => n.host);
+  const allUp = hosts.length > 0 && hosts.every((s) => s === 'Running');
+  const state = !c.exists ? 'not created' : allUp ? 'running' : hosts.length && hosts.every((s) => s === 'Stopped') ? 'stopped' : hosts.length ? 'partly running' : 'unknown';
+  const btn = (action, label, cls, enabled) => h('button', { class: cls, disabled: running || !enabled, onclick: () => clusterAction(action) }, label);
+
+  show(
+    h('h1', {}, 'Cluster'),
+    h('p', { class: 'lede', html: inline(`The console and lab tasks run against the minikube profile \`${c.profile}\` (kubectl context \`${c.context}\`). Other minikube profiles on this machine are not touched from here.`) }),
+    h('p', { class: 'cluster-state' }, h('span', { class: 'dot ' + (allUp ? 'up' : 'down') }), h('strong', {}, state), c.error && h('span', { class: 'muted' }, ' · ' + c.error)),
+    hosts.length > 0 &&
+      h(
+        'table',
+        {},
+        h('thead', {}, h('tr', {}, ['Node', 'Role', 'Host', 'Kubelet', 'API server'].map((t) => h('th', {}, t)))),
+        h('tbody', {}, c.nodes.map((n) => h('tr', {}, h('td', {}, h('code', {}, n.name)), h('td', {}, n.worker ? 'worker' : 'control plane'), h('td', {}, n.host), h('td', {}, n.kubelet), h('td', {}, n.worker ? '—' : n.apiserver))))
+      ),
+    h(
+      'p',
+      { class: 'cluster-actions' },
+      btn('start', c.exists ? 'Start' : 'Create & start', 'primary', !allUp),
+      btn('stop', 'Stop', '', hosts.includes('Running')),
+      btn('delete', 'Delete', 'danger', c.exists),
+      h('button', { class: 'ghost', disabled: running, onclick: renderCluster }, 'Refresh')
+    ),
+    h(
+      'ul',
+      { class: 'tips' },
+      h('li', { html: inline('**Start** brings a stopped cluster back with its resources, or creates the profile if it does not exist (a few minutes for 3 nodes).') }),
+      h('li', { html: inline('**Stop** shuts the nodes down and keeps everything on them.') }),
+      h('li', { html: inline('**Delete** removes the profile and all its resources. Start afterwards gives a completely clean cluster.') }),
+      h('li', { html: inline(`A new profile is created with \`minikube ${c.startArgs.join(' ')}\`.`) })
+    ),
+    job &&
+      h(
+        'section',
+        {},
+        h('h2', {}, `minikube ${job.action} `, h('span', { class: 'muted' }, running ? `running · ${ago(Date.now() - job.startedAt)}` : `${job.code === 0 ? 'finished' : `failed (exit ${job.code})`} · took ${ago(job.endedAt - job.startedAt)}`)),
+        h('pre', { class: 'code job-log' }, job.log.trimEnd())
+      )
+  );
+  const log = $('.job-log');
+  if (log) log.scrollTop = log.scrollHeight;
+  if (running) clusterPoll = setTimeout(renderCluster, 2000);
+  else if (job && job.endedAt !== lastJobEnd) {
+    lastJobEnd = job.endedAt;
+    refreshStatus();
+  }
+}
+
 function renderCheats() {
   show(
     h('h1', {}, 'Cheat sheet'),
-    h('p', { class: 'lede' }, 'Click a command to put it into the terminal for editing. Node-level commands (systemctl, crictl, kubeadm, etcdctl) are for reference; run them inside minikube ssh.'),
+    h('p', { class: 'lede' }, `Click a command to put it into the terminal for editing. Node-level commands (systemctl, crictl, kubeadm, etcdctl) are for reference; run them inside minikube ssh -p ${META.profile}.`),
     ...META.cheatsheet.flatMap((sec) => [
       h('h3', {}, sec.title),
       ...sec.items.map(([k, c]) => h('div', { class: 'cheat' }, h('span', { class: 'k' }, k), h('button', { title: 'Put into terminal', onclick: () => toTerminal(c) }, c))),
@@ -1039,12 +1117,14 @@ function route() {
   const nav = name !== 'task' ? name : META.scenarios.some((t) => t.id === arg) ? 'scenarios' : 'tasks';
   $$('#nav a').forEach((a) => a.classList.toggle('active', a.dataset.view === nav));
   quizKeys = null;
+  clearTimeout(clusterPoll);
   if (name === 'tasks') renderTasks(arg || 'all');
   else if (name === 'task') renderTask(arg);
   else if (name === 'scenarios') renderScenarios();
   else if (name === 'exam') renderExam();
   else if (name === 'quiz') renderQuiz();
   else if (name === 'cheats') renderCheats();
+  else if (name === 'cluster') renderCluster();
   else renderOverview();
   view.scrollTop = 0;
 }

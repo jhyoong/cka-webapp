@@ -7,7 +7,7 @@ cluster, and it grades lab tasks automatically.
 ## Run
 
 ```bash
-minikube start        # if the cluster is not running
+minikube start        # if the cluster is not running (or use the Cluster page)
 npm start             # or: node server.js
 ```
 
@@ -19,6 +19,8 @@ network (the addresses are printed at startup). No dependencies to install (Node
 | `PORT`         | `8377`     | Port to listen on                               |
 | `HOST`         | `0.0.0.0`  | Bind address; `127.0.0.1` for this machine only |
 | `KUBE_CONTEXT` | `minikube` | kubectl context every command is pinned to      |
+| `MINIKUBE_PROFILE` | `$KUBE_CONTEXT` | minikube profile the Cluster page starts, stops and deletes |
+| `MINIKUBE_START_ARGS` | `--driver=docker --container-runtime=containerd --nodes=3 --cpus=2 --memory=2200 --addons=metrics-server` | Flags used when the Cluster page creates the profile |
 | `PUBLIC_HOST`  | *(unset)*  | Extra hostname to accept, served over https by a proxy or tunnel in front (e.g. `cka.example.com`) |
 
 ## What is in it
@@ -37,14 +39,17 @@ network (the addresses are printed at startup). No dependencies to install (Node
 - **Mock exam** — 15 random lab tasks weighted like the exam, 120-minute timer, hints hidden,
   graded at the end against the 66% pass mark.
 - **Cheat sheet** — click a command to drop it into the terminal.
+- **Cluster** — start, stop or delete the minikube profile the console is pinned to, with the
+  per-node status and the live `minikube` output. Start on a deleted profile creates it afresh,
+  so Delete then Start gives a clean cluster. Other profiles on the machine are never touched.
 - **Console** (right side)
   - *Terminal*: `kubectl …` or `k …`, history with ↑/↓, multi-line paste, `<<EOF` heredocs,
     `> file` to save output into `workspace/`, `kubectl edit` with an inline editor.
   - *YAML editor*: write or paste manifests, Apply / Dry-run / Delete, save and open workspace
     files, and "Load from cluster" to edit a live object.
 
-Some tasks need minikube addons: `minikube addons enable metrics-server` (for `kubectl top` and
-live HPA metrics) and optionally `minikube addons enable ingress`. Install `helm` and restart the
+Some tasks need minikube addons: `minikube addons enable metrics-server -p <profile>` (for `kubectl top`
+and live HPA metrics) and optionally `minikube addons enable ingress -p <profile>`. Install `helm` and restart the
 server to use helm in the console.
 
 ## Console limits

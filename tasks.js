@@ -9,6 +9,8 @@
 const NGINX = 'nginx:1.27-alpine';
 const BUSYBOX = 'busybox:1.36';
 const DOCS = 'https://kubernetes.io/docs';
+// minikube profile behind the pinned context; minikube names its nodes <profile>, <profile>-m02, …
+const PROFILE = process.env.MINIKUBE_PROFILE || process.env.KUBE_CONTEXT || 'minikube';
 
 const domains = [
   {
@@ -374,7 +376,7 @@ kubectl -n trbl-logs logs payments -c ledger > payments-error.log
     lab: true,
     scenario: `Among the Pods labelled \`tier=jobs\` in namespace \`trbl-top\`, find the one consuming the most CPU and write **only its name** to the file \`top-pod.txt\`.
 
-**Prerequisite:** this needs metrics-server. On minikube run \`minikube addons enable metrics-server\` in your own terminal, then wait about a minute after Setup for metrics to appear.`,
+**Prerequisite:** this needs metrics-server. On minikube run \`minikube addons enable metrics-server -p ${PROFILE}\` in your own terminal, then wait about a minute after Setup for metrics to appear.`,
     setup: {
       yaml:
         ns('trbl-top') +
@@ -423,7 +425,7 @@ spec:
 
 Restore the cluster.
 
-**Practising locally:** \`minikube ssh\` drops you on the control-plane node. Manifests live in \`/etc/kubernetes/manifests\`. Copy a manifest to \`/tmp\` first, break one flag, watch what happens, then repair it. Do this on a throwaway cluster.`,
+**Practising locally:** \`minikube ssh -p ${PROFILE}\` drops you on the control-plane node. Manifests live in \`/etc/kubernetes/manifests\`. Copy a manifest to \`/tmp\` first, break one flag, watch what happens, then repair it. Do this on a throwaway cluster.`,
     hints: ['With the API server down, kubectl is useless — work on the node with `crictl` and the kubelet journal.', 'The kubelet watches `/etc/kubernetes/manifests`. Saving a fixed manifest restarts the static Pod within seconds.', 'A YAML syntax error means the kubelet cannot create the Pod at all: no container in `crictl ps -a`, error only in `journalctl -u kubelet`.'],
     solution: `ssh controlplane && sudo -i
 
@@ -465,7 +467,7 @@ kubectl -n kube-system get pods
 
 Reported causes: kubelet stopped or disabled, wrong path/option in the kubelet config, wrong CA file, container runtime stopped, wrong API server address in \`/etc/kubernetes/kubelet.conf\`.
 
-**Practising locally:** \`minikube ssh -n minikube-m02\`, then \`sudo systemctl stop kubelet\` and watch the node go NotReady (takes ~40s). Fix it the way you would in the exam.`,
+**Practising locally:** \`minikube ssh -p ${PROFILE} -n ${PROFILE}-m02\`, then \`sudo systemctl stop kubelet\` and watch the node go NotReady (takes ~40s). Fix it the way you would in the exam.`,
     hints: ['Order of investigation: `kubectl describe node` → ssh → `systemctl status kubelet` → `journalctl -u kubelet`.', '"Survives a reboot" means `systemctl enable`, not just `start`.'],
     solution: `kubectl get nodes
 kubectl describe node <node>          # Conditions: "Kubelet stopped posting node status"
@@ -898,7 +900,7 @@ kubectl get nodes`,
 
 No longer a named curriculum line, but it falls under "manage the lifecycle of Kubernetes clusters" and candidates still report it.
 
-**Practising locally:** \`minikube ssh\`, then \`sudo cat /etc/kubernetes/manifests/etcd.yaml\`. On minikube the certificates live under \`/var/lib/minikube/certs/etcd/\` instead of \`/etc/kubernetes/pki/etcd/\`. Finding the right paths in the manifest is exactly the exam skill.`,
+**Practising locally:** \`minikube ssh -p ${PROFILE}\`, then \`sudo cat /etc/kubernetes/manifests/etcd.yaml\`. On minikube the certificates live under \`/var/lib/minikube/certs/etcd/\` instead of \`/etc/kubernetes/pki/etcd/\`. Finding the right paths in the manifest is exactly the exam skill.`,
     hints: ['All four connection flags can be read from the etcd static Pod manifest: `--listen-client-urls`, `--trusted-ca-file`, `--cert-file`, `--key-file`.', 'Restore never touches the running etcd: it writes a new data dir, and you point the static Pod\'s hostPath volume at it.'],
     solution: `ssh controlplane && sudo -i
 grep -E 'listen-client-urls|trusted-ca-file|cert-file|key-file|data-dir' /etc/kubernetes/manifests/etcd.yaml
@@ -1014,7 +1016,7 @@ kubectl get nodes                               # Ready
     scenario: `1. A prepared host \`node02\` (container runtime, kubeadm and kubelet installed) must join the existing cluster as a worker.
 2. Know how you would initialise a **highly available** control plane behind a load balancer and add a second control-plane node.
 
-**Practising locally:** \`minikube node add\` uses kubeadm join under the hood, but to type the commands yourself use a kubeadm VM lab or Killercoda.`,
+**Practising locally:** \`minikube node add -p ${PROFILE}\` uses kubeadm join under the hood, but to type the commands yourself use a kubeadm VM lab or Killercoda.`,
     hints: ['Never hunt for old tokens: `kubeadm token create --print-join-command` prints a complete, fresh join command.', 'HA needs a stable `--control-plane-endpoint` (load balancer DNS/IP) at init time; it cannot be added easily later.'],
     solution: `# ── join a worker ──
 # on the control plane
@@ -1215,7 +1217,7 @@ Create an Ingress \`shop\` in that namespace:
 - path \`/\` (type \`Prefix\`) → \`web-svc:80\`
 - annotation \`nginx.ingress.kubernetes.io/rewrite-target: /\`
 
-Note: no ingress controller is required for the checks. To see it route for real, run \`minikube addons enable ingress\`.`,
+Note: no ingress controller is required for the checks. To see it route for real, run \`minikube addons enable ingress -p ${PROFILE}\`.`,
     setup: {
       yaml:
         ns('net-ingress') +
@@ -1261,7 +1263,7 @@ spec:
   --annotation nginx.ingress.kubernetes.io/rewrite-target=/
 kubectl -n net-ingress describe ingress shop
 kubectl get ingressclass
-# with a controller: curl -H 'Host: shop.example.com' http://$(minikube ip)/api`,
+# with a controller: curl -H 'Host: shop.example.com' http://$(minikube ip -p ${PROFILE})/api`,
     cleanup: delNs('net-ingress'),
     docs: `${DOCS}/concepts/services-networking/ingress/`,
   },
@@ -1606,7 +1608,7 @@ kubectl -n work-tls exec deploy/nginx-static -- cat /etc/nginx/conf.d/tls.conf
 - minimum **1**, maximum **4** replicas
 - a scale-**down** stabilisation window of **30 seconds**
 
-Note: the HPA only shows live metrics with metrics-server (\`minikube addons enable metrics-server\`); the checks validate your spec.`,
+Note: the HPA only shows live metrics with metrics-server (\`minikube addons enable metrics-server -p ${PROFILE}\`); the checks validate your spec.`,
     setup: {
       yaml:
         ns('work-hpa') +
@@ -1814,8 +1816,8 @@ Clean up afterwards — the cleanup button removes the taint and label from all 
     ],
     hints: ['A toleration only *permits* scheduling onto the tainted node; it does not attract the Pod. That is what nodeSelector / nodeAffinity is for.', '`kubectl taint nodes <node> dedicated=gpu:NoSchedule` and `kubectl label nodes <node> hardware=gpu`.'],
     solution: `kubectl get nodes
-kubectl taint nodes minikube-m02 dedicated=gpu:NoSchedule
-kubectl label nodes minikube-m02 hardware=gpu
+kubectl taint nodes ${PROFILE}-m02 dedicated=gpu:NoSchedule
+kubectl label nodes ${PROFILE}-m02 hardware=gpu
 
 kubectl apply -f - <<EOF
 apiVersion: v1
@@ -1839,8 +1841,8 @@ EOF
 kubectl -n work-schedule get pod gpu-job -o wide
 
 # remove again:
-#   kubectl taint nodes minikube-m02 dedicated-
-#   kubectl label nodes minikube-m02 hardware-`,
+#   kubectl taint nodes ${PROFILE}-m02 dedicated-
+#   kubectl label nodes ${PROFILE}-m02 hardware-`,
     cleanup: [...delNs('work-schedule'), ['taint', 'nodes', '--all', 'dedicated-'], ['label', 'nodes', '--all', 'hardware-']],
     docs: `${DOCS}/concepts/scheduling-eviction/taint-and-toleration/`,
   },
@@ -2140,4 +2142,4 @@ const cheatsheet = [
   },
 ];
 
-module.exports = { tasks, domains, examInfo, cheatsheet, helpers: { NGINX, BUSYBOX, DOCS, ns, deploy, delNs } };
+module.exports = { tasks, domains, examInfo, cheatsheet, helpers: { NGINX, BUSYBOX, DOCS, PROFILE, ns, deploy, delNs } };
